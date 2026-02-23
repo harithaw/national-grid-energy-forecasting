@@ -147,11 +147,19 @@ def load_and_preprocess(path: Path) -> pd.DataFrame:
 
     # -- PAST covariates (rolling statistics on observed generation) --------
     gen = df["Total_Generation"]
-    df["Roll7_Mean"]  = gen.rolling(7,  min_periods=1).mean()
-    df["Roll30_Mean"] = gen.rolling(30, min_periods=1).mean()
-    df["Roll90_Mean"] = gen.rolling(90, min_periods=1).mean()
-    df["Roll30_Std"]  = gen.rolling(30, min_periods=2).std().fillna(0)
-    df["Monthly_Avg"] = gen.groupby(t.month).transform("mean")
+    df["Roll7_Mean"]   = gen.rolling(7,   min_periods=1).mean()
+    df["Roll30_Mean"]  = gen.rolling(30,  min_periods=1).mean()
+    df["Roll90_Mean"]  = gen.rolling(90,  min_periods=1).mean()
+    df["Roll365_Mean"] = gen.rolling(365, min_periods=30).mean()          # 1-year trend level
+    df["Roll365_Mean"].fillna(df["Roll365_Mean"].expanding().mean(), inplace=True)
+    df["Roll30_Std"]   = gen.rolling(30, min_periods=2).std().fillna(0)
+    df["Monthly_Avg"]  = gen.groupby(t.month).transform("mean")
+
+    # YoY delta: today's generation vs same day last year — captures structural
+    # growth / decline and is the strongest signal for the 2024-2026 upward shift
+    df["YoY_Delta"] = gen - gen.shift(365)
+    # First 365 rows have no prior year; fill with zero (no YoY info available)
+    df["YoY_Delta"].fillna(0.0, inplace=True)
 
     print(f"\nTarget statistics:")
     print(df["Total_Generation"].describe().round(3).to_string())
@@ -174,8 +182,9 @@ def build_darts_series(df: pd.DataFrame):
         "Solar_Total", "Mini_Hydro",
         "Biomass_Waste", "Wind", "Major_Hydro",
         "Oil_IPP", "Oil_CEB", "Coal",
-        "Roll7_Mean", "Roll30_Mean", "Roll90_Mean",
+        "Roll7_Mean", "Roll30_Mean", "Roll90_Mean", "Roll365_Mean",
         "Roll30_Std", "Monthly_Avg",
+        "YoY_Delta",       # generation vs same day last year — key trend signal
     ]
 
     future_cov_cols = [

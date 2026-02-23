@@ -81,8 +81,9 @@ def prepare_data():
         "Solar_Total", "Mini_Hydro",
         "Biomass_Waste", "Wind", "Major_Hydro",
         "Oil_IPP", "Oil_CEB", "Coal",
-        "Roll7_Mean", "Roll30_Mean", "Roll90_Mean",
+        "Roll7_Mean", "Roll30_Mean", "Roll90_Mean", "Roll365_Mean",
         "Roll30_Std", "Monthly_Avg",
+        "YoY_Delta",
     ]
     future_cov_cols = [
         "Sin_DayOfYear", "Cos_DayOfYear",
@@ -247,7 +248,7 @@ def main():
     print("Data ready.\n")
 
     storage = f"sqlite:///{STUDY_DB}"
-    study_name = "lgbm_forecast_v2"
+    study_name = "lgbm_forecast_v3"   # v3: +Roll365_Mean +YoY_Delta
     load_if_exists = args.resume
 
     study = optuna.create_study(

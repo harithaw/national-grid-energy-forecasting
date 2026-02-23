@@ -1,16 +1,16 @@
 {
-  "num_leaves": 143,
-  "n_estimators": 1062,
-  "learning_rate": 0.010532,
+  "num_leaves": 65,
+  "n_estimators": 615,
+  "learning_rate": 0.006958,
   "max_depth": 10,
-  "min_child_samples": 18,
-  "subsample": 0.6709,
-  "colsample_bytree": 0.8062,
-  "reg_alpha": 0.004553,
-  "reg_lambda": 0.894604,
+  "min_child_samples": 15,
+  "subsample": 0.8144,
+  "colsample_bytree": 0.9854,
+  "reg_alpha": 0.004792,
+  "reg_lambda": 0.402349,
   "target_lags": [
-    -730,
     -365,
+    -182,
     -90,
     -28,
     -14,
@@ -27,12 +27,12 @@
     -28
   ],
   "future_cov_lags": [
-    3,
+    7,
     1
   ],
-  "train_length": 1095,
+  "train_length": 760,
   "stride": 30,
-  "_val_rmse": 1.2213,
+  "_val_rmse": 1.1045,
   "_n_trials": 30,
-  "_optuna_trial_no": 22
+  "_optuna_trial_no": 29
 }
