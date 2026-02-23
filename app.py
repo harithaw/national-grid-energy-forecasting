@@ -124,26 +124,6 @@ full_df   = load_processed_data()
 future_df = load_future_forecast()
 
 
-# ══════════════════════════════════════════════════════════════════════════
-#  MAIN APP
-# ══════════════════════════════════════════════════════════════════════════
-
-# ── Header ─────────────────────────────────────────────────────────────────
-st.markdown(
-    """
-    <div style="background: linear-gradient(135deg, #1a237e 0%, #283593 50%, #1565c0 100%);
-                padding: 2rem 2.5rem; border-radius: 12px; margin-bottom: 1.5rem;">
-        <h1 style="color:white; margin:0; font-size:2rem;">
-            ⚡ Sri Lanka National Grid – Daily Generation Forecast
-        </h1>
-        <p style="color:#90CAF9; margin:0.4rem 0 0; font-size:1rem;">
-            LightGBM · Darts Library · SHAP Explainability
-        </p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
 # ============================================================
 # SECTION 1 – Future Generation Forecast  (FOREMOST)
 # ============================================================
@@ -161,65 +141,79 @@ if future_df is not None:
     )
     future_slice = future_df.head(horizon)
 
-    chart_col, shap_col = st.columns([3, 2], gap="large")
+    # ── Last 30 days of historical actuals (per-source breakdown) ──────────
+    hist_src_avail = [c for c in SOURCE_COLS if c in full_df.columns]
+    hist_30 = full_df[hist_src_avail + ["Total_Generation"]].iloc[-30:]
 
-    with chart_col:
-        fig_bar = go.Figure()
-        for src in src_available:
-            fig_bar.add_trace(go.Bar(
-                x=future_slice.index,
-                y=future_slice[src],
-                name=SOURCE_LABELS.get(src, src),
-                marker_color=COLOR_MAP.get(src, "#9E9E9E"),
-                hovertemplate="%{y:.2f} GWh<extra>" + SOURCE_LABELS.get(src, src) + "</extra>",
-            ))
-        fig_bar.add_trace(go.Scatter(
-            x=future_slice.index,
-            y=future_slice["Forecast_GWh"],
-            name="Total (Forecast)",
-            mode="lines",
-            line=dict(color="black", width=1.8, dash="dot"),
-            hovertemplate="%{y:.2f} GWh total<extra></extra>",
+    # Y-axis ceiling: 15% above the highest bar in either series
+    hist_max = hist_30["Total_Generation"].max()
+    fc_max   = future_slice["Forecast_GWh"].max()
+    y_ceil   = max(hist_max, fc_max) * 1.15
+
+    boundary_str = hist_30.index[-1].strftime("%Y-%m-%d")
+
+    fig_bar = go.Figure()
+
+    # Historical stacked bars (one trace per source, showlegend only on first)
+    for i, src in enumerate(hist_src_avail):
+        fig_bar.add_trace(go.Bar(
+            x=hist_30.index,
+            y=hist_30[src],
+            name=SOURCE_LABELS.get(src, src),
+            legendgroup=src,
+            marker_color=COLOR_MAP.get(src, "#9E9E9E"),
+            opacity=0.65,
+            hovertemplate="%{x|%d %b}<br>" + SOURCE_LABELS.get(src, src) + ": %{y:.2f} GWh<extra>Historical</extra>",
         ))
-        fig_bar.update_layout(
-            barmode="stack",
-            title=(
-                f"Forecast by Source – Next {horizon} Days  "
-                f"({future_slice.index[0].strftime('%d %b %Y')} → "
-                f"{future_slice.index[-1].strftime('%d %b %Y')})"
-            ),
-            xaxis_title="Date",
-            yaxis_title="Generation (GWh/day)",
-            yaxis=dict(rangemode="tozero"),
-            height=460,
-            template="plotly_white",
-            legend=dict(
-                orientation="h", yanchor="bottom", y=1.02,
-                xanchor="right", x=1, font=dict(size=11),
-            ),
-        )
-        st.plotly_chart(fig_bar, width="stretch")
 
-    with shap_col:
-        st.markdown("#### 🔍 Why these values? – Feature Importance")
-        st.caption(
-            "Global SHAP summary over the test period. Features at the top "
-            "have the largest influence on every forecast step. "
-            "Red dots = high feature value, blue = low."
-        )
-        if (ARTIFACT_DIR / "shap_summary.png").exists():
-            st.image(str(ARTIFACT_DIR / "shap_summary.png"), width="stretch")
-        else:
-            st.info("Run `forecast.py` to generate the SHAP plot.")
+    # Forecast stacked bars (same colour, full opacity, legend hidden – shared group)
+    for src in src_available:
+        fig_bar.add_trace(go.Bar(
+            x=future_slice.index,
+            y=future_slice[src],
+            name=SOURCE_LABELS.get(src, src),
+            legendgroup=src,
+            showlegend=False,
+            marker_color=COLOR_MAP.get(src, "#9E9E9E"),
+            opacity=1.0,
+            hovertemplate="%{x|%d %b}<br>" + SOURCE_LABELS.get(src, src) + ": %{y:.2f} GWh<extra>Forecast</extra>",
+        ))
 
-        if (ARTIFACT_DIR / "shap_local.png").exists():
-            with st.expander("🔬 Most-recent prediction breakdown (local SHAP)"):
-                st.caption(
-                    "SHAP contributions for the **last test-set prediction**. "
-                    "Red bars push the value up; blue bars push it down."
-                )
-                st.image(str(ARTIFACT_DIR / "shap_local.png"), width="stretch")
+    # Boundary line between historical and forecast
+    fig_bar.add_shape(
+        type="line",
+        x0=boundary_str, x1=boundary_str,
+        y0=0, y1=1, yref="paper",
+        line=dict(color="#424242", width=2, dash="dash"),
+    )
+    fig_bar.add_annotation(
+        x=boundary_str, y=1.03, yref="paper",
+        text="▶ Forecast starts",
+        showarrow=False, xanchor="left",
+        font=dict(color="#424242", size=12),
+    )
 
+    fig_bar.update_layout(
+        barmode="stack",
+        title=(
+            f"Generation by Source – Last 30 Days (actual) + Next {horizon} Days (forecast)  "
+            f"│  {hist_30.index[0].strftime('%d %b %Y')} → "
+            f"{future_slice.index[-1].strftime('%d %b %Y')}"
+        ),
+        xaxis_title="Date",
+        yaxis_title="Generation (GWh/day)",
+        yaxis=dict(range=[0, y_ceil]),
+        height=500,
+        template="plotly_white",
+        bargap=0.1,
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.06,
+            xanchor="right", x=1, font=dict(size=11),
+        ),
+    )
+    st.plotly_chart(fig_bar, width="stretch")
+
+    # ── Stats row ──────────────────────────────────────────────────────────
     kc1, kc2, kc3, kc4, kc5 = st.columns(5)
     last_actual = float(full_df["Total_Generation"].iloc[-1])
     mean_fc     = future_slice["Forecast_GWh"].mean()
@@ -231,6 +225,30 @@ if future_df is not None:
     kc5.metric("🔄 vs Last Actual",
                f"{last_actual:.2f} GWh/day",
                delta=f"{delta_pct:+.1f}%")
+
+    # ── SHAP explanation images ────────────────────────────────────────────
+    st.markdown("#### 🔍 Model Explainability – Why these forecasts?")
+    shap_l, shap_r = st.columns(2, gap="large")
+    with shap_l:
+        st.markdown("**Global Feature Importance (SHAP Summary)**")
+        st.caption(
+            "Each dot is one test-set observation. Red = high feature value, blue = low. "
+            "A wide spread means that feature strongly influences the forecast."
+        )
+        if (ARTIFACT_DIR / "shap_summary.png").exists():
+            st.image(str(ARTIFACT_DIR / "shap_summary.png"), width="stretch")
+        else:
+            st.info("Run `forecast.py` to generate the SHAP summary plot.")
+    with shap_r:
+        st.markdown("**Local Explanation – Most Recent Prediction**")
+        st.caption(
+            "SHAP contributions for the last test-set prediction. "
+            "Red bars push the output higher; blue bars push it lower."
+        )
+        if (ARTIFACT_DIR / "shap_local.png").exists():
+            st.image(str(ARTIFACT_DIR / "shap_local.png"), width="stretch")
+        else:
+            st.info("Run `forecast.py` to generate the local SHAP plot.")
 
     with st.expander("📅 View / download detailed forecast table"):
         col_labels = {
@@ -274,8 +292,8 @@ for col, (key, label, unit) in zip(
     val = metrics.get(key, "N/A")
     col.metric(label, f"{val} {unit}".strip() if isinstance(val, (int, float)) else str(val))
 
-tab_daily, tab_monthly, tab_resid = st.tabs(
-    ["📉 Daily Forecast vs Actual", "📅 Monthly Aggregation", "📐 Residuals"]
+tab_daily, tab_monthly, tab_resid, tab_scatter = st.tabs(
+    ["📉 Daily Forecast vs Actual", "📅 Monthly Aggregation", "📐 Residuals", "🎯 Actual vs Predicted (R²)"]
 )
 
 with tab_daily:
@@ -286,7 +304,7 @@ with tab_daily:
     ))
     fig.add_trace(go.Scatter(
         x=pred_df.index, y=pred_df["Predicted"],
-        name="Predicted", line=dict(color="#FF5722", width=1.5, dash="dash"),
+        name="Predicted", line=dict(color="#FF5722", width=2.5, dash="4px,3px"),
     ))
     fig.update_layout(
         title="Daily Total Generation – Actual vs Predicted (Test 2025–2026)",
@@ -328,6 +346,53 @@ with tab_resid:
     )
     st.plotly_chart(fig_r, width="stretch")
 
+with tab_scatter:
+    if (ARTIFACT_DIR / "actual_vs_predicted.png").exists():
+        sc_l, sc_c, sc_r = st.columns([1, 2, 1])
+        with sc_c:
+            st.image(str(ARTIFACT_DIR / "actual_vs_predicted.png"), width="stretch")
+    else:
+        # Fallback: render interactively with Plotly (before forecast.py is re-run)
+        r2_val  = metrics.get("R2", None)
+        xy_min  = min(pred_df["Actual"].min(), pred_df["Predicted"].min()) * 0.97
+        xy_max  = max(pred_df["Actual"].max(), pred_df["Predicted"].max()) * 1.03
+        fig_sc = go.Figure()
+        fig_sc.add_trace(go.Scatter(
+            x=pred_df["Actual"],
+            y=pred_df["Predicted"],
+            mode="markers",
+            name="Test-set predictions",
+            marker=dict(
+                color=pred_df["Predicted"] - pred_df["Actual"],
+                colorscale="RdYlGn_r",
+                size=5,
+                opacity=0.7,
+                colorbar=dict(title="Error (GWh)", thickness=12),
+                cmin=-(pred_df["Predicted"] - pred_df["Actual"]).abs().max(),
+                cmax= (pred_df["Predicted"] - pred_df["Actual"]).abs().max(),
+            ),
+            hovertemplate="Actual: %{x:.2f} GWh<br>Predicted: %{y:.2f} GWh<extra></extra>",
+        ))
+        fig_sc.add_trace(go.Scatter(
+            x=[xy_min, xy_max], y=[xy_min, xy_max],
+            mode="lines",
+            name="Perfect fit (y = x)",
+            line=dict(color="#212121", width=1.5, dash="dash"),
+        ))
+        r2_label = f"R² = {r2_val:.4f}" if isinstance(r2_val, float) else ""
+        fig_sc.update_layout(
+            title=f"Actual vs Predicted – Test Set  ({r2_label})",
+            xaxis_title="Actual Generation (GWh/day)",
+            yaxis_title="Predicted Generation (GWh/day)",
+            xaxis=dict(range=[xy_min, xy_max]),
+            yaxis=dict(range=[xy_min, xy_max], scaleanchor="x", scaleratio=1),
+            height=500,
+            template="plotly_white",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+        st.plotly_chart(fig_sc, width="stretch")
+        st.info("Re-run `forecast.py` to generate the static PNG version of this chart.")
+
 st.markdown("---")
 
 # ============================================================
@@ -356,34 +421,6 @@ fig_mix.update_layout(
     legend=dict(orientation="h", yanchor="bottom", y=1.02, font=dict(size=11)),
 )
 st.plotly_chart(fig_mix, width="stretch")
-
-st.markdown("---")
-
-# ============================================================
-# SECTION 4 – Test-Set Data Table
-# ============================================================
-st.subheader("📋 Test-Set Forecast Data Table")
-
-display_df              = pred_df.copy()
-display_df["Residual"]  = (display_df["Actual"] - display_df["Predicted"]).round(3)
-display_df["Abs Error"] = display_df["Residual"].abs().round(3)
-display_df["Error %"]   = ((display_df["Residual"] / display_df["Actual"]) * 100).round(2)
-display_df.index        = display_df.index.strftime("%Y-%m-%d")
-display_df              = display_df.round(3)
-
-st.dataframe(
-    display_df.style
-    .background_gradient(subset=["Abs Error"], cmap="YlOrRd")
-    .format({"Error %": "{:.2f}%"}),
-    width="stretch",
-    height=380,
-)
-st.download_button(
-    "⬇️ Download Test-Set Forecast CSV",
-    display_df.to_csv().encode("utf-8"),
-    file_name="forecast_results.csv",
-    mime="text/csv",
-)
 
 st.markdown(
     """

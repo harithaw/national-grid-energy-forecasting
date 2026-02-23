@@ -404,6 +404,32 @@ def train_and_evaluate(model,
     plt.close()
     print(f"Monthly comparison plot saved -> {ARTIFACT_DIR / 'monthly_comparison.png'}")
 
+    # -- Actual vs Predicted scatter (R²) ---------------------------------
+    errors      = y_pred - y_true
+    abs_max_err = np.abs(errors).max()
+    fig3, ax4 = plt.subplots(figsize=(7, 7))
+    sc = ax4.scatter(y_true, y_pred, c=errors,
+                     cmap="RdYlGn_r", vmin=-abs_max_err, vmax=abs_max_err,
+                     alpha=0.7, s=20, edgecolors="none")
+    xy_min_sc = min(y_true.min(), y_pred.min()) * 0.97
+    xy_max_sc = max(y_true.max(), y_pred.max()) * 1.03
+    ax4.plot([xy_min_sc, xy_max_sc], [xy_min_sc, xy_max_sc],
+             color="#212121", lw=1.5, ls="--", label="Perfect fit (y = x)")
+    ax4.set_xlim(xy_min_sc, xy_max_sc)
+    ax4.set_ylim(xy_min_sc, xy_max_sc)
+    ax4.set_aspect("equal", adjustable="box")
+    ax4.set_title(f"Actual vs Predicted – Test Set  (R² = {r2_val:.4f})",
+                  fontsize=13, fontweight="bold")
+    ax4.set_xlabel("Actual Generation (GWh/day)")
+    ax4.set_ylabel("Predicted Generation (GWh/day)")
+    cbar = plt.colorbar(sc, ax=ax4, fraction=0.046, pad=0.04)
+    cbar.set_label("Error (Predicted − Actual, GWh)")
+    ax4.legend(); ax4.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(ARTIFACT_DIR / "actual_vs_predicted.png", dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"Actual vs Predicted scatter saved -> {ARTIFACT_DIR / 'actual_vs_predicted.png'}")
+
     return predictions, test_aligned, metrics
 
 
