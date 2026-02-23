@@ -22,9 +22,10 @@ def main():
      train_past, val_past, test_past,
      train_future, val_future, test_future,
      past_cov_cols, future_cov_cols,
-     retrain_train_length, retrain_stride) = build_darts_series(df)
+     retrain_train_length, retrain_stride,
+     quantiles) = build_darts_series(df)
 
-    predictions, test_aligned, metrics = train_and_evaluate(
+    pred_q50, pred_q10, pred_q90, test_aligned, metrics = train_and_evaluate(
         model,
         train_target, val_target, test_target,
         train_past,   val_past,   test_past,
@@ -38,9 +39,13 @@ def main():
     with open(ARTIFACT_DIR / "model.pkl", "wb") as f:
         pickle.dump(model, f)
 
-    pred_df3   = predictions.to_dataframe();   pred_df3.columns   = ["Predicted"]
-    actual_df3 = test_aligned.to_dataframe();  actual_df3.columns = ["Actual"]
-    actual_df3.join(pred_df3).to_csv(ARTIFACT_DIR / "test_predictions.csv")
+    pred_df3   = pred_q50.to_dataframe();     pred_df3.columns   = ["Predicted"]
+    actual_df3 = test_aligned.to_dataframe(); actual_df3.columns = ["Actual"]
+    save_df    = actual_df3.join(pred_df3)
+    if pred_q10 is not None:
+        save_df["CI_Low"]  = pred_q10.to_dataframe().values
+        save_df["CI_High"] = pred_q90.to_dataframe().values
+    save_df.to_csv(ARTIFACT_DIR / "test_predictions.csv")
 
     with open(ARTIFACT_DIR / "metrics.json", "w") as f:
         json.dump(metrics, f, indent=2)

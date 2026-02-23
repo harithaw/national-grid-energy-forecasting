@@ -193,6 +193,33 @@ if future_df is not None:
         font=dict(color="#424242", size=12),
     )
 
+    if "CI_High" in future_slice.columns and "CI_Low" in future_slice.columns:
+        # Upper boundary line (p90)
+        fig_bar.add_trace(go.Scatter(
+            x=future_slice.index, y=future_slice["CI_High"],
+            mode="lines",
+            line=dict(width=1.5, color="rgba(255,87,34,0.7)", dash="dot"),
+            showlegend=False,
+            hovertemplate="%{x|%d %b}<br>90th percentile: %{y:.2f} GWh<extra></extra>",
+        ))
+        # Lower boundary line + fill (p10)
+        fig_bar.add_trace(go.Scatter(
+            x=future_slice.index, y=future_slice["CI_Low"],
+            mode="lines",
+            line=dict(width=1.5, color="rgba(255,87,34,0.7)", dash="dot"),
+            fill="tonexty", fillcolor="rgba(255,87,34,0.25)",
+            name="80% confidence band (p10–p90)",
+            hovertemplate="%{x|%d %b}<br>10th percentile: %{y:.2f} GWh<extra></extra>",
+        ))
+        # Median line on top
+        fig_bar.add_trace(go.Scatter(
+            x=future_slice.index, y=future_slice["Forecast_GWh"],
+            mode="lines",
+            line=dict(width=2.5, color="rgba(255,87,34,1.0)"),
+            name="Median forecast (p50)",
+            hovertemplate="%{x|%d %b}<br>Median: %{y:.2f} GWh<extra></extra>",
+        ))
+
     fig_bar.update_layout(
         barmode="stack",
         title=(
@@ -251,11 +278,14 @@ if future_df is not None:
             st.info("Run `forecast.py` to generate the local SHAP plot.")
 
     with st.expander("📅 View / download detailed forecast table"):
+        ci_cols = [c for c in ["CI_Low", "CI_High"] if c in future_slice.columns]
         col_labels = {
-            "Forecast_GWh": "Total Forecast (GWh/day)",
+            "CI_Low":        "10th Percentile (GWh/day)",
+            "Forecast_GWh":  "Median Forecast (GWh/day)",
+            "CI_High":       "90th Percentile (GWh/day)",
             **{s: SOURCE_LABELS.get(s, s) + " (GWh/day)" for s in src_available},
         }
-        show_df = future_slice[["Forecast_GWh"] + src_available].copy()
+        show_df = future_slice[ci_cols + ["Forecast_GWh"] + src_available].copy()
         show_df.index = show_df.index.strftime("%Y-%m-%d")
         show_df.rename(columns=col_labels, inplace=True)
         st.dataframe(show_df.round(3), height=300)

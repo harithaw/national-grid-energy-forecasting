@@ -47,10 +47,11 @@ def train_and_evaluate(model,
         verbose=False,
         last_points_only=True,
     )
-    val_aligned = val_target.slice_intersect(val_hist)
-    print(f"  Val RMSE : {float(darts_rmse(val_aligned, val_hist)):.4f} GWh")
-    print(f"  Val MAE  : {float(darts_mae(val_aligned, val_hist)):.4f} GWh")
-    print(f"  Val MAPE : {float(darts_mape(val_aligned, val_hist)):.4f} %")
+    val_q50    = val_hist.univariate_component(1) if val_hist.n_components > 1 else val_hist
+    val_aligned = val_target.slice_intersect(val_q50)
+    print(f"  Val RMSE : {float(darts_rmse(val_aligned, val_q50)):.4f} GWh")
+    print(f"  Val MAE  : {float(darts_mae(val_aligned, val_q50)):.4f} GWh")
+    print(f"  Val MAPE : {float(darts_mape(val_aligned, val_q50)):.4f} %")
 
     print("\nGenerating adaptive rolling forecasts on test set ...")
     print(f"  (retrain=True, stride={retrain_stride}, train_length={retrain_train_length})")
@@ -69,9 +70,13 @@ def train_and_evaluate(model,
     )
     print(f"Predictions generated : {len(predictions)} time-steps")
 
-    test_aligned = test_target.slice_intersect(predictions)
+    pred_q50 = predictions.univariate_component(1) if predictions.n_components > 1 else predictions
+    pred_q10 = predictions.univariate_component(0) if predictions.n_components > 1 else None
+    pred_q90 = predictions.univariate_component(2) if predictions.n_components > 1 else None
+
+    test_aligned = test_target.slice_intersect(pred_q50)
     y_true = test_aligned.to_series().values
-    y_pred = predictions.to_series().values
+    y_pred = pred_q50.to_series().values
 
     rmse_val = float(darts_rmse(test_aligned, predictions))
     mae_val  = float(darts_mae(test_aligned,  predictions))
@@ -98,7 +103,14 @@ def train_and_evaluate(model,
 
     ax = axes[0]
     test_aligned.to_series().plot(ax=ax, label="Actual",    color="#2196F3", lw=1.3)
-    predictions.to_series().plot( ax=ax, label="Predicted", color="#FF5722", lw=1.3, ls="--")
+    pred_q50.to_series().plot(    ax=ax, label="Predicted (median)", color="#FF5722", lw=1.3, ls="--")
+    if pred_q10 is not None:
+        ax.fill_between(
+            test_aligned.to_series().index,
+            pred_q10.to_series().values,
+            pred_q90.to_series().values,
+            alpha=0.18, color="#FF5722", label="80% confidence interval",
+        )
     ax.set_title("Daily Total Generation - Actual vs Predicted (Test Set 2025-2026)",
                  fontsize=13, fontweight="bold")
     ax.set_ylabel("Generation (GWh/day)")
@@ -118,7 +130,7 @@ def train_and_evaluate(model,
     print(f"\nPrediction plot saved -> {ARTIFACT_DIR / 'prediction_plot.png'}")
 
     actual_df2 = test_aligned.to_dataframe(); actual_df2.columns = ["Actual"]
-    pred_df2   = predictions.to_dataframe();  pred_df2.columns   = ["Predicted"]
+    pred_df2   = pred_q50.to_dataframe();     pred_df2.columns   = ["Predicted"]
     monthly    = actual_df2.join(pred_df2).resample("ME").mean()
 
     fig2, ax3 = plt.subplots(figsize=(12, 5))
@@ -161,4 +173,4 @@ def train_and_evaluate(model,
     plt.close()
     print(f"Actual vs Predicted scatter saved -> {ARTIFACT_DIR / 'actual_vs_predicted.png'}")
 
-    return predictions, test_aligned, metrics
+    return pred_q50, pred_q10, pred_q90, test_aligned, metrics

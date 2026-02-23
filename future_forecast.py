@@ -71,12 +71,27 @@ def generate_future_forecast(model: LightGBMModel,
         series            = target_series,
         past_covariates   = extended_past,
         future_covariates = extended_future,
+        num_samples       = 500,
+        show_warnings     = False,
     )
 
-    future_df = future_preds.to_dataframe()
-    future_df.columns  = ["Forecast_GWh"]
+    # Extract quantile bounds from sampled predictions
+    if future_preds.n_samples > 1:
+        all_vals = future_preds.all_values()          # shape: (T, 1, n_samples)
+        future_df = pd.DataFrame(
+            {
+                "CI_Low":       np.quantile(all_vals[:, 0, :], 0.1, axis=-1),
+                "Forecast_GWh": np.quantile(all_vals[:, 0, :], 0.5, axis=-1),
+                "CI_High":      np.quantile(all_vals[:, 0, :], 0.9, axis=-1),
+            },
+            index=future_preds.time_index,
+        )
+        future_df = future_df.clip(lower=0).round(4)
+    else:
+        future_df = future_preds.to_dataframe()
+        future_df.columns = ["Forecast_GWh"]
+        future_df["Forecast_GWh"] = future_df["Forecast_GWh"].clip(lower=0).round(4)
     future_df.index.name = "Date"
-    future_df["Forecast_GWh"] = future_df["Forecast_GWh"].clip(lower=0).round(4)
 
     src_cols = [
         "Solar_Total", "Mini_Hydro", "Biomass_Waste", "Wind",
@@ -93,6 +108,7 @@ def generate_future_forecast(model: LightGBMModel,
     out = ARTIFACT_DIR / "future_forecast.csv"
     future_df.to_csv(out)
     print(f"Future forecast saved → {out}")
-    print(future_df[["Forecast_GWh"] + src_cols].head(10).to_string())
+    ci_disp = [c for c in ["CI_Low", "CI_High"] if c in future_df.columns]
+    print(future_df[["Forecast_GWh"] + ci_disp + src_cols].head(10).to_string())
     print(f"  ... ({len(future_df)} rows total)")
     return future_df

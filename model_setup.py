@@ -106,17 +106,22 @@ def build_darts_series(df: pd.DataFrame):
         retrain_stride       = 30
         _src = "defaults (run tune_hyperparams.py to optimise)"
 
+    QUANTILES = [0.1, 0.5, 0.9]
+
     model = LightGBMModel(
         lags=target_lags,
         lags_past_covariates=past_cov_lags,
         lags_future_covariates=future_cov_lags,
         output_chunk_length=1,
+        likelihood="quantile",
+        quantiles=QUANTILES,
         random_state=42,
         verbosity=-1,
         **lgbm_kwargs,
     )
 
     print(f"\nLightGBMModel configured OK  [{_src}]")
+    print(f"  quantiles             : {QUANTILES}  (10th / 50th / 90th percentile)")
     print(f"  target lags           : {target_lags}")
     print(f"  past covariate lags   : {past_cov_lags}")
     print(f"  future covariate range: {future_cov_lags}")
@@ -132,4 +137,5 @@ def build_darts_series(df: pd.DataFrame):
             train_past, val_past, test_past,
             train_future, val_future, test_future,
             past_cov_cols, future_cov_cols,
-            retrain_train_length, retrain_stride)
+            retrain_train_length, retrain_stride,
+            QUANTILES)
