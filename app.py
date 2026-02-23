@@ -102,7 +102,7 @@ st.markdown(
             ⚡ Sri Lanka National Grid – Daily Generation Forecast
         </h1>
         <p style="color:#90CAF9; margin:0.4rem 0 0; font-size:1rem;">
-            LightGBM · Darts Library · SHAP Explainability
+            LightGBM · SHAP Explainability · PUCSL Dataset
         </p>
     </div>
     """,
@@ -127,7 +127,7 @@ future_df = load_future_forecast()
 # ============================================================
 # SECTION 1 – Future Generation Forecast  (FOREMOST)
 # ============================================================
-st.subheader("🔮 Future Generation Forecast")
+st.subheader("Future Generation Forecast")
 
 if future_df is not None:
     src_available = [c for c in SOURCE_COLS if c in future_df.columns]
@@ -227,7 +227,7 @@ if future_df is not None:
                delta=f"{delta_pct:+.1f}%")
 
     # ── SHAP explanation images ────────────────────────────────────────────
-    st.markdown("#### 🔍 Model Explainability – Why these forecasts?")
+    st.markdown("#### Model Explainability – Why these forecasts?")
     shap_l, shap_r = st.columns(2, gap="large")
     with shap_l:
         st.markdown("**Global Feature Importance (SHAP Summary)**")
@@ -276,7 +276,7 @@ st.markdown("---")
 # ============================================================
 # SECTION 2 – Model Performance
 # ============================================================
-st.subheader("📊 Model Performance")
+st.subheader("Model Performance")
 
 mk1, mk2, mk3, mk4, mk5 = st.columns(5)
 for col, (key, label, unit) in zip(
@@ -398,7 +398,7 @@ st.markdown("---")
 # ============================================================
 # SECTION 3 – Historical Generation Mix
 # ============================================================
-st.subheader("🔋 Historical Generation Mix")
+st.subheader("Historical Generation Mix")
 
 avail_src   = [c for c in SOURCE_COLS if c in full_df.columns]
 monthly_mix = full_df[avail_src].resample("ME").mean()

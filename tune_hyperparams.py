@@ -1,35 +1,6 @@
-""" 
-tune_hyperparams.py – Optuna hyperparameter search for the LightGBM forecast model
-====================================================================================
-Strategy
---------
-Each trial trains a model via adaptive rolling historical_forecasts on 2024 with
-retrain=True and a fixed train_length window — the SAME evaluation regime used
-on the test set.  This is slower (~30-60 s/trial) but optimises directly for
-what we actually care about: rolling forecast quality.
+"""Optuna hyperparameter search for the LightGBM forecast model.
 
-The search covers:
-  - All major LightGBM hyperparameters
-  - Target lag structure (whether to include -730 / -182)
-  - Past covariate lag depth
-  - Future covariate lookahead window
-  - Retraining strategy (train_length, stride)
-
-Best parameters are written to:
-    artifacts/best_hyperparams.json
-
-forecast.py automatically picks them up on the next run.
-
-Usage
------
-    # 30 trials (default, ~15-30 min)
-    .\\venv\\Scripts\\python.exe tune_hyperparams.py
-
-    # Custom trial count
-    .\\venv\\Scripts\\python.exe tune_hyperparams.py --trials 50
-
-    # Resume a previous study
-    .\\venv\\Scripts\\python.exe tune_hyperparams.py --resume
+Usage:  .\\venv\\Scripts\\python.exe tune_hyperparams.py [--trials N] [--resume]
 """
 from __future__ import annotations
 
@@ -47,7 +18,7 @@ from darts import TimeSeries
 from darts.models import LightGBMModel
 from darts.metrics import rmse as darts_rmse
 
-from forecast import load_and_preprocess
+from preprocess import load_and_preprocess
 
 warnings.filterwarnings("ignore")
 
@@ -56,22 +27,6 @@ ARTIFACT_DIR = Path("artifacts")
 ARTIFACT_DIR.mkdir(exist_ok=True)
 STUDY_DB     = str(ARTIFACT_DIR / "optuna_study.db")
 
-# Current baseline on the VALIDATION set (2024) for reference
-# (run with retrain=False – this is what each trial measures)
-BASELINE_RMSE = None   # filled after first trial or can preset manually
-CURRENT_CFG = {
-    "num_leaves": 127, "n_estimators": 1000, "learning_rate": 0.03,
-    "max_depth": 10,   "min_child_samples": 15, "subsample": 0.8,
-    "colsample_bytree": 0.8, "reg_alpha": 0.05, "reg_lambda": 0.05,
-    "target_lags": [-1,-2,-3,-7,-14,-28,-90,-182,-365],
-    "past_cov_lags": [-1,-2,-7,-14,-28],
-    "future_cov_lags": [7, 1],
-}
-
-
-# ---------------------------------------------------------------------------
-# Data preparation (done ONCE outside the objective)
-# ---------------------------------------------------------------------------
 
 def prepare_data():
     """Load, preprocess, and build all Darts TimeSeries objects needed."""
@@ -124,15 +79,10 @@ def prepare_data():
     }
 
 
-# ---------------------------------------------------------------------------
-# Objective
-# ---------------------------------------------------------------------------
-
 def make_objective(data: dict):
     """Return an Optuna objective closure that uses pre-loaded data."""
 
     def objective(trial: optuna.Trial) -> float:
-        # -- LightGBM hyperparameters --------------------------------------
         num_leaves        = trial.suggest_int("num_leaves", 31, 255)
         n_estimators      = trial.suggest_int("n_estimators", 300, 1500)
         learning_rate     = trial.suggest_float("learning_rate", 0.005, 0.1, log=True)
@@ -143,7 +93,6 @@ def make_objective(data: dict):
         reg_alpha         = trial.suggest_float("reg_alpha", 1e-4, 1.0, log=True)
         reg_lambda        = trial.suggest_float("reg_lambda", 1e-4, 1.0, log=True)
 
-        # -- Lag structure -------------------------------------------------
         base_lags = [-1, -2, -3, -7, -14, -28, -90]
         include_182 = trial.suggest_categorical("include_lag_182", [True, False])
         include_730 = trial.suggest_categorical("include_lag_730", [True, False])
@@ -168,11 +117,9 @@ def make_objective(data: dict):
         fut_past_ctx = trial.suggest_categorical("fut_past_ctx", [3, 7, 14])
         future_cov_lags = (fut_past_ctx, 1)
 
-        # -- Retraining strategy -------------------------------------------
         train_length = trial.suggest_categorical("train_length", [760, 900, 1095, 1460])
         stride       = trial.suggest_categorical("stride", [7, 14, 30])
 
-        # -- Build and evaluate model with retrain=True --------------------
         model = LightGBMModel(
             lags=target_lags,
             lags_past_covariates=past_cov_lags,
@@ -192,7 +139,6 @@ def make_objective(data: dict):
         )
 
         try:
-            # Use adaptive rolling retraining on val set — same regime as test
             val_preds = model.historical_forecasts(
                 series=data["trainval_target"],
                 past_covariates=data["trainval_past"],
@@ -214,10 +160,6 @@ def make_objective(data: dict):
 
     return objective
 
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(
