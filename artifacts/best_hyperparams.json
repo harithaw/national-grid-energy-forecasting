@@ -1,0 +1,38 @@
+{
+  "num_leaves": 143,
+  "n_estimators": 1062,
+  "learning_rate": 0.010532,
+  "max_depth": 10,
+  "min_child_samples": 18,
+  "subsample": 0.6709,
+  "colsample_bytree": 0.8062,
+  "reg_alpha": 0.004553,
+  "reg_lambda": 0.894604,
+  "target_lags": [
+    -730,
+    -365,
+    -90,
+    -28,
+    -14,
+    -7,
+    -3,
+    -2,
+    -1
+  ],
+  "past_cov_lags": [
+    -1,
+    -2,
+    -7,
+    -14,
+    -28
+  ],
+  "future_cov_lags": [
+    3,
+    1
+  ],
+  "train_length": 1095,
+  "stride": 30,
+  "_val_rmse": 1.2213,
+  "_n_trials": 30,
+  "_optuna_trial_no": 22
+}

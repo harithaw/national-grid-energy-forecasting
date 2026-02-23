@@ -224,45 +224,70 @@ def build_darts_series(df: pd.DataFrame):
     print(f"  Test  : {len(test_target):4d} days "
           f"({test_target.start_time().date()}  -> {test_target.end_time().date()})")
 
-    # Specific meaningful lags
-    # 1,2,3 = short AR; 7,14 = weekly; 28,90 = monthly/quarterly;
-    # 182,365 = semi-annual/annual (365-day lag is key for YoY trend capture)
-    target_lags     = [-1, -2, -3, -7, -14, -28, -90, -182, -365]
-    past_cov_lags   = [-1, -2, -7, -14, -28]
-    future_cov_lags = (7, 1)   # 7 days past context + current/next step
+    # ── Load tuned hyperparameters if available; fall back to defaults ──────
+    _hp_path = ARTIFACT_DIR / "best_hyperparams.json"
+    if _hp_path.exists():
+        with open(_hp_path) as _f:
+            _hp = json.load(_f)
+        target_lags     = _hp["target_lags"]
+        past_cov_lags   = _hp["past_cov_lags"]
+        future_cov_lags = tuple(_hp["future_cov_lags"])
+        lgbm_kwargs = dict(
+            n_estimators     = _hp["n_estimators"],
+            num_leaves       = _hp["num_leaves"],
+            learning_rate    = _hp["learning_rate"],
+            max_depth        = _hp["max_depth"],
+            min_child_samples= _hp["min_child_samples"],
+            subsample        = _hp["subsample"],
+            colsample_bytree = _hp["colsample_bytree"],
+            reg_alpha        = _hp["reg_alpha"],
+            reg_lambda       = _hp["reg_lambda"],
+        )
+        retrain_train_length = int(_hp.get("train_length", 730))
+        retrain_stride       = int(_hp.get("stride", 30))
+        _src = (f"tuned (Optuna trial #{_hp.get('_optuna_trial_no','?')}, "
+                f"val RMSE={_hp.get('_val_rmse','?')} GWh)")
+    else:
+        # Default manually-tuned configuration
+        target_lags     = [-1, -2, -3, -7, -14, -28, -90, -182, -365]
+        past_cov_lags   = [-1, -2, -7, -14, -28]
+        future_cov_lags = (7, 1)
+        lgbm_kwargs = dict(
+            n_estimators=1000, num_leaves=127, learning_rate=0.03,
+            max_depth=10, min_child_samples=15, subsample=0.8,
+            colsample_bytree=0.8, reg_alpha=0.05, reg_lambda=0.05,
+        )
+        retrain_train_length = 730
+        retrain_stride       = 30
+        _src = "defaults (run tune_hyperparams.py to optimise)"
 
     model = LightGBMModel(
         lags=target_lags,
         lags_past_covariates=past_cov_lags,
         lags_future_covariates=future_cov_lags,
         output_chunk_length=1,
-        n_estimators=1000,
-        num_leaves=127,
-        learning_rate=0.03,
-        max_depth=10,
-        min_child_samples=15,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        reg_alpha=0.05,
-        reg_lambda=0.05,
         random_state=42,
         verbosity=-1,
+        **lgbm_kwargs,
     )
 
-    print(f"\nLightGBMModel v2 configured OK")
+    print(f"\nLightGBMModel configured OK  [{_src}]")
     print(f"  target lags           : {target_lags}")
     print(f"  past covariate lags   : {past_cov_lags}")
-    print(f"  future covariate range: {future_cov_lags}  (7 past + 1 ahead)")
-    print(f"  n_estimators          : 1000  (was 500)")
-    print(f"  num_leaves            : 127   (was 63)")
-    print(f"  learning_rate         : 0.03  (was 0.05)")
+    print(f"  future covariate range: {future_cov_lags}")
+    print(f"  n_estimators          : {lgbm_kwargs['n_estimators']}")
+    print(f"  num_leaves            : {lgbm_kwargs['num_leaves']}")
+    print(f"  learning_rate         : {lgbm_kwargs['learning_rate']}")
+    print(f"  retrain train_length  : {retrain_train_length}")
+    print(f"  retrain stride        : {retrain_stride}")
 
     return (model,
             target_series, past_cov_ts, future_cov_ts,
             train_target, val_target, test_target,
             train_past, val_past, test_past,
             train_future, val_future, test_future,
-            past_cov_cols, future_cov_cols)
+            past_cov_cols, future_cov_cols,
+            retrain_train_length, retrain_stride)
 
 
 # ===========================================================================
@@ -273,7 +298,9 @@ def train_and_evaluate(model,
                        train_target, val_target, test_target,
                        train_past, val_past, test_past,
                        train_future, val_future, test_future,
-                       target_series, past_cov_ts, future_cov_ts):
+                       target_series, past_cov_ts, future_cov_ts,
+                       retrain_train_length: int = 730,
+                       retrain_stride: int = 30):
     print("\n" + "="*60)
     print("STEP 3 - Model Training & Evaluation")
     print("="*60)
@@ -315,7 +342,7 @@ def train_and_evaluate(model,
     # 730 days of data, so by mid-2025 the model has seen 2024-2025 data
     # with the high generation values -> adapts to the structural upward trend
     print("\nGenerating adaptive rolling forecasts on test set ...")
-    print("  (retrain=True, stride=30, train_length=730 - retrains monthly)")
+    print(f"  (retrain=True, stride={retrain_stride}, train_length={retrain_train_length} - retrains monthly)")
 
     predictions = model.historical_forecasts(
         series=target_series,
@@ -325,7 +352,7 @@ def train_and_evaluate(model,
         forecast_horizon=1,
         stride=1,
         retrain=True,
-        train_length=730,
+        train_length=retrain_train_length,
         verbose=False,
         last_points_only=True,
     )
@@ -442,13 +469,15 @@ def explain_with_shap(model, target_series, past_cov_ts, future_cov_ts, test_tar
     print("STEP 4 - Explainability with SHAP")
     print("="*60)
 
-    bg_start = pd.Timestamp("2022-12-31")
+    # Background must exceed the longest target lag (+future ctx buffer).
+    # With -730 in target_lags we need at least ~750 days; use 5 years to be safe.
+    bg_start = pd.Timestamp("2019-12-31")
     bg_end   = pd.Timestamp("2025-01-01")
     bg_target = target_series.drop_before(bg_start).drop_after(bg_end)
     bg_past   = past_cov_ts.drop_before(bg_start).drop_after(bg_end)
     bg_future = future_cov_ts.drop_before(bg_start).drop_after(bg_end)
 
-    print("Building ShapExplainer (2023-2024 background) ...")
+    print("Building ShapExplainer (2020-2024 background) ...")
     explainer = ShapExplainer(
         model=model,
         background_series=bg_target,
@@ -457,8 +486,8 @@ def explain_with_shap(model, target_series, past_cov_ts, future_cov_ts, test_tar
     )
     print("ShapExplainer built OK")
 
-    # Foreground needs >= 365 points (the longest lag); use 400 days as context.
-    fg_start  = test_target.end_time() - pd.Timedelta(days=400)
+    # Foreground context must also cover the longest lag (730 days) + buffer.
+    fg_start  = test_target.end_time() - pd.Timedelta(days=800)
     fg_target = target_series.drop_before(fg_start)
     fg_past   = past_cov_ts.drop_before(fg_start)
     fg_future = future_cov_ts.drop_before(fg_start)
@@ -632,7 +661,8 @@ def main():
      train_target, val_target, test_target,
      train_past, val_past, test_past,
      train_future, val_future, test_future,
-     past_cov_cols, future_cov_cols) = build_darts_series(df)
+     past_cov_cols, future_cov_cols,
+     retrain_train_length, retrain_stride) = build_darts_series(df)
 
     predictions, test_aligned, metrics = train_and_evaluate(
         model,
@@ -640,12 +670,11 @@ def main():
         train_past,   val_past,   test_past,
         train_future, val_future, test_future,
         target_series, past_cov_ts, future_cov_ts,
+        retrain_train_length=retrain_train_length,
+        retrain_stride=retrain_stride,
     )
 
-    shap_explanation = explain_with_shap(
-        model, target_series, past_cov_ts, future_cov_ts, test_target
-    )
-
+    # -- Save core artifacts BEFORE optional SHAP step --------------------
     print("\nSaving artifacts ...")
     with open(ARTIFACT_DIR / "model.pkl", "wb") as f:
         pickle.dump(model, f)
@@ -664,6 +693,15 @@ def main():
         model, df, target_series, past_cov_ts, future_cov_ts,
         horizon=FORECAST_HORIZON,
     )
+
+    # -- STEP 4 - SHAP (optional; skip gracefully if background too small) -
+    try:
+        explain_with_shap(
+            model, target_series, past_cov_ts, future_cov_ts, test_target
+        )
+    except Exception as _shap_err:
+        print(f"\n[WARN] SHAP step skipped: {_shap_err}")
+        print("       Re-run forecast.py to retry after adjusting bg window.")
 
     print(f"\nAll artifacts saved to  {ARTIFACT_DIR.resolve()}")
     print("\n" + "="*60)
